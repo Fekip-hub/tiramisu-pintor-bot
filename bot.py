@@ -61,8 +61,83 @@ async def quitar_roles_color_anteriores(member: discord.Member):
         await member.remove_roles(*roles_color, reason="Cambiando color de usuario")
 
 
+async def aplicar_color(interaction: discord.Interaction, nombre_color: str, color_obj: discord.Color):
+    guild = interaction.guild
+    member = interaction.user
+
+    bot_member = guild.get_member(bot.user.id)
+    if bot_member.guild_permissions.manage_roles is False:
+        await interaction.followup.send(
+            "No tengo permisos para gestionar roles en este servidor. Pide a un administrador que me dé el permiso 'Gestionar roles'.",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        nuevo_rol = await obtener_o_crear_rol_color(guild, color_obj, nombre_color)
+
+        if bot_member.top_role.position <= nuevo_rol.position:
+            await interaction.followup.send(
+                "Mi rol necesita estar más arriba que el rol de color en la lista de roles del servidor. Pide a un administrador que suba mi rol.",
+                ephemeral=True,
+            )
+            return
+
+        await quitar_roles_color_anteriores(member)
+        await member.add_roles(nuevo_rol, reason="Cambio de color solicitado")
+
+        await interaction.followup.send(
+            f"Listo, tu color ahora es **{nombre_color}** ({str(color_obj)}).",
+            ephemeral=True,
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "No tengo permisos suficientes para crear o asignar ese rol.",
+            ephemeral=True,
+        )
+    except Exception as e:
+        await interaction.followup.send(f"Ocurrió un error al cambiar tu color: {e}", ephemeral=True)
+
+
+class BotonColor(discord.ui.Button):
+    def __init__(self, nombre_color: str, valor_color: int):
+        super().__init__(
+            label=nombre_color.capitalize(),
+            style=discord.ButtonStyle.secondary,
+            emoji="🎨",
+        )
+        self.nombre_color = nombre_color
+        self.valor_color = valor_color
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await aplicar_color(interaction, self.nombre_color, discord.Color(self.valor_color))
+
+
+class VistaColores(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for nombre_color, valor_color in COLORES_PREDEFINIDOS.items():
+            self.add_item(BotonColor(nombre_color, valor_color))
+
+
+def crear_embed_colores():
+    embed = discord.Embed(
+        title="Elige tu color",
+        description="Haz clic en el botón del color que quieras para tu nombre.",
+        color=discord.Color.blurple(),
+    )
+    lista_colores = "\n".join(
+        [f"🎨 **{nombre.capitalize()}**" for nombre in COLORES_PREDEFINIDOS]
+    )
+    embed.add_field(name="Colores disponibles", value=lista_colores, inline=False)
+    embed.set_footer(text="También puedes usar /color con un código hex personalizado")
+    return embed
+
+
 @bot.event
 async def on_ready():
+    bot.add_view(VistaColores())
     await bot.tree.sync()
     print(f"Tiramisu Pintor conectado como {bot.user}")
 
@@ -106,34 +181,14 @@ async def color(
     guild = interaction.guild
     member = interaction.user
 
-    bot_member = guild.get_member(bot.user.id)
-    if bot_member.guild_permissions.manage_roles is False:
-        await interaction.followup.send(
-            "No tengo permisos para gestionar roles en este servidor. Pide a un administrador que me dé el permiso 'Gestionar roles'."
-        )
-        return
+    await aplicar_color(interaction, nombre_color, color_obj)
 
-    try:
-        nuevo_rol = await obtener_o_crear_rol_color(guild, color_obj, nombre_color)
 
-        if bot_member.top_role.position <= nuevo_rol.position:
-            await interaction.followup.send(
-                "Mi rol necesita estar más arriba que el rol de color en la lista de roles del servidor. Pide a un administrador que suba mi rol."
-            )
-            return
-
-        await quitar_roles_color_anteriores(member)
-        await member.add_roles(nuevo_rol, reason="Cambio de color solicitado")
-
-        await interaction.followup.send(
-            f"Listo, tu color ahora es **{nombre_color}** ({str(color_obj)})."
-        )
-    except discord.Forbidden:
-        await interaction.followup.send(
-            "No tengo permisos suficientes para crear o asignar ese rol."
-        )
-    except Exception as e:
-        await interaction.followup.send(f"Ocurrió un error al cambiar tu color: {e}")
+@bot.tree.command(name="colores", description="Muestra un menú con botones para elegir tu color")
+async def colores(interaction: discord.Interaction):
+    embed = crear_embed_colores()
+    vista = VistaColores()
+    await interaction.response.send_message(embed=embed, view=vista)
 
 
 @bot.tree.command(name="quitar_color", description="Quita tu color personalizado actual")
