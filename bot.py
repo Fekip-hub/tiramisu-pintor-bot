@@ -111,6 +111,7 @@ class BotonColor(discord.ui.Button):
             label=nombre_color.capitalize(),
             style=discord.ButtonStyle.secondary,
             emoji="🎨",
+            custom_id=f"colores_color_{nombre_color}",
         )
         self.nombre_color = nombre_color
         self.valor_color = valor_color
