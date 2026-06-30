@@ -26,6 +26,12 @@ COLORES_PREDEFINIDOS = {
 
 NOMBRE_PREFIJO_ROL_COLOR = "color-"
 
+ROLES_GENERALES = {
+    "anuncios": {"emoji": "📢", "color": 0x99AAB5},
+    "juegos": {"emoji": "🎮", "color": 0x99AAB5},
+    "eventos": {"emoji": "📅", "color": 0x99AAB5},
+}
+
 
 def hex_a_color(texto: str):
     texto = texto.strip().lstrip("#")
@@ -135,9 +141,116 @@ def crear_embed_colores():
     return embed
 
 
+async def obtener_o_crear_rol_general(guild: discord.Guild, nombre_rol: str, color_valor: int):
+    rol_existente = discord.utils.find(lambda r: r.name == nombre_rol, guild.roles)
+    if rol_existente:
+        return rol_existente
+    nuevo_rol = await guild.create_role(
+        name=nombre_rol,
+        color=discord.Color(color_valor),
+        reason="Rol generado por Tiramisu Pintor (reaction roll)",
+    )
+    return nuevo_rol
+
+
+class BotonRolGeneral(discord.ui.Button):
+    def __init__(self, nombre_rol: str, emoji: str, color_valor: int):
+        super().__init__(
+            label=nombre_rol.capitalize(),
+            style=discord.ButtonStyle.secondary,
+            emoji=emoji,
+            custom_id=f"reaction_roll_rol_{nombre_rol}",
+        )
+        self.nombre_rol = nombre_rol
+        self.color_valor = color_valor
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        member = interaction.user
+
+        bot_member = guild.get_member(bot.user.id)
+        if bot_member.guild_permissions.manage_roles is False:
+            await interaction.followup.send(
+                "No tengo permisos para gestionar roles en este servidor.", ephemeral=True
+            )
+            return
+
+        try:
+            rol = await obtener_o_crear_rol_general(guild, self.nombre_rol, self.color_valor)
+
+            if bot_member.top_role.position <= rol.position:
+                await interaction.followup.send(
+                    "Mi rol necesita estar más arriba que este rol en la lista de roles del servidor.",
+                    ephemeral=True,
+                )
+                return
+
+            if rol in member.roles:
+                await member.remove_roles(rol, reason="Quitó rol vía reaction roll")
+                await interaction.followup.send(
+                    f"Se te quitó el rol **{self.nombre_rol.capitalize()}**.", ephemeral=True
+                )
+            else:
+                await member.add_roles(rol, reason="Obtuvo rol vía reaction roll")
+                await interaction.followup.send(
+                    f"Ahora tienes el rol **{self.nombre_rol.capitalize()}**.", ephemeral=True
+                )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "No tengo permisos suficientes para asignar ese rol.", ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(f"Ocurrió un error: {e}", ephemeral=True)
+
+
+class BotonColorReactionRoll(discord.ui.Button):
+    def __init__(self, nombre_color: str, valor_color: int):
+        super().__init__(
+            label=nombre_color.capitalize(),
+            style=discord.ButtonStyle.secondary,
+            emoji="🎨",
+            custom_id=f"reaction_roll_color_{nombre_color}",
+        )
+        self.nombre_color = nombre_color
+        self.valor_color = valor_color
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await aplicar_color(interaction, self.nombre_color, discord.Color(self.valor_color))
+
+
+class VistaReactionRoll(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for nombre_color, valor_color in COLORES_PREDEFINIDOS.items():
+            self.add_item(BotonColorReactionRoll(nombre_color, valor_color))
+        for nombre_rol, datos in ROLES_GENERALES.items():
+            self.add_item(BotonRolGeneral(nombre_rol, datos["emoji"], datos["color"]))
+
+
+def crear_embed_reaction_roll():
+    embed = discord.Embed(
+        title="Panel de roles",
+        description="Haz clic en los botones para asignarte roles. Puedes elegir un color y los roles que quieras.",
+        color=discord.Color.blurple(),
+    )
+    lista_colores = "\n".join(
+        [f"🎨 **{nombre.capitalize()}**" for nombre in COLORES_PREDEFINIDOS]
+    )
+    embed.add_field(name="Colores", value=lista_colores, inline=True)
+    lista_roles = "\n".join(
+        [f"{datos['emoji']} **{nombre.capitalize()}**" for nombre, datos in ROLES_GENERALES.items()]
+    )
+    embed.add_field(name="Roles", value=lista_roles, inline=True)
+    embed.set_footer(text="Haz clic de nuevo en un rol para quitártelo")
+    return embed
+
+
 @bot.event
 async def on_ready():
     bot.add_view(VistaColores())
+    bot.add_view(VistaReactionRoll())
     await bot.tree.sync()
     print(f"Tiramisu Pintor conectado como {bot.user}")
 
@@ -189,6 +302,22 @@ async def colores(interaction: discord.Interaction):
     embed = crear_embed_colores()
     vista = VistaColores()
     await interaction.response.send_message(embed=embed, view=vista)
+
+
+@bot.tree.command(name="reaction_roll", description="Publica el panel fijo de roles (solo administradores)")
+@app_commands.checks.has_permissions(administrator=True)
+async def reaction_roll(interaction: discord.Interaction):
+    embed = crear_embed_reaction_roll()
+    vista = VistaReactionRoll()
+    await interaction.response.send_message(embed=embed, view=vista)
+
+
+@reaction_roll.error
+async def reaction_roll_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message(
+            "Solo administradores pueden publicar el panel de roles.", ephemeral=True
+        )
 
 
 @bot.tree.command(name="quitar_color", description="Quita tu color personalizado actual")
